@@ -102,8 +102,8 @@ async def on_ready():
 
 @bot.event
 async def on_message(message):
-    if bot.user in message.mentions:
-        prompt = message.content.replace(f"@{bot.user.name} ", "")
+    if isinstance(message.channel, discord.DMChannel) and message.author != bot.user:
+        prompt = message.content
         remaining_time = is_on_cooldown(message.author.id)
         if remaining_time:
             await message.channel.send(f"You're on cooldown. Please wait {remaining_time:.0f} seconds.")
@@ -118,6 +118,23 @@ async def on_message(message):
             else:
                 await message.channel.send(response)
             user_cooldowns[message.author.id] = time.time()
+    elif bot.user in message.mentions:
+        prompt = message.content.replace(f"@{bot.user.name}", "").strip()
+        remaining_time = is_on_cooldown(message.author.id)
+        if remaining_time:
+            await message.channel.send(f"You're on cooldown. Please wait {remaining_time:.0f} seconds.")
+            return
+        async with message.channel.typing():
+            response = await gpt4_response(prompt)
+            # If the message is too long, split it
+            if len(response) > 2000:
+                responses = [response[i:i + 2000] for i in range(0, len(response), 2000)]
+                for res in responses:
+                    await message.channel.send(res)
+            else:
+                await message.channel.send(response)
+            user_cooldowns[message.author.id] = time.time()
+
     await bot.process_commands(message)
 
 
