@@ -6,6 +6,9 @@ import aiohttp
 from discord.ext import commands
 import os
 import dotenv
+import pdfplumber  # PDF extraction library
+import tempfile  # For creating temporary files
+import asyncio  # For running blocking IO in a separate thread
 
 # Load environment variables from .env file
 dotenv.load_dotenv()
@@ -41,11 +44,10 @@ async def send_request(prompt):
         "model": "gpt-4",
         "messages": [{"role": "system", "content": "You are talking to Chloe, an AI assistant."},
                      {"role": "user", "content": prompt}],
-        "max_tokens": 6000,
+        "max_tokens": 8000,
         "n": 1,
         "temperature": 0.8
     }
-
     json_data = json.dumps(data, ensure_ascii=False).encode('utf8')
     escaped_data = json_data.decode('utf8')
 
@@ -60,7 +62,7 @@ async def send_request(prompt):
                 if response and response.status == 429:
                     retry_after = int(response.headers.get("Retry-After", "1"))
                     print(f"Rate limited. Retrying in {retry_after} seconds...")
-                    time.sleep(retry_after)
+                    await asyncio.sleep(retry_after)
                 else:
                     print(f"Error occurred: {e}")
                     return None
@@ -82,6 +84,11 @@ async def gpt4_response(prompt):
     prompt = preprocess_code(prompt)
     response_json = await send_request(prompt)
     return parse_response(response_json)
+
+
+def extract_text_from_pdf(file_path):
+    with pdfplumber.open(file_path) as pdf:
+        return ' '.join(page.extract_text() for page in pdf.pages)
 
 
 # Cooldown check
@@ -109,6 +116,17 @@ async def on_message(message):
             await message.channel.send(f"You're on cooldown. Please wait {remaining_time:.0f} seconds.")
             return
         async with message.channel.typing():
+            # Handle attachments
+            if message.attachments:
+                for attachment in message.attachments:
+                    if attachment.filename.endswith('.pdf'):
+                        temp_file = tempfile.NamedTemporaryFile(delete=False)
+                        await attachment.save(temp_file.name)
+                        temp_file.close()  # Close the file before deleting it
+                        extracted_text = await asyncio.to_thread(extract_text_from_pdf, temp_file.name)
+                        os.unlink(temp_file.name)  # Delete temp file
+                        prompt += ' ' + extracted_text
+
             response = await gpt4_response(prompt)
             # If the message is too long, split it
             if len(response) > 2000:
